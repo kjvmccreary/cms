@@ -7,24 +7,28 @@ using BCrypt.Net;
 using IdentityService.Data;
 using IdentityService.Models;
 using Shared.DTOs;
+using Microsoft.AspNetCore.Http;
 
 namespace IdentityService.Services
 {
     public class AuthService : IAuthService
-    {
-        private readonly IdentityDbContext _context;
-        private readonly IConfiguration _configuration;
-        private readonly ILogger<AuthService> _logger;
+{
+    private readonly IdentityDbContext _context;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<AuthService> _logger;
+    private readonly IHttpContextAccessor _httpContextAccessor; // ADD THIS
 
-        public AuthService(
-            IdentityDbContext context,
-            IConfiguration configuration,
-            ILogger<AuthService> logger)
-        {
-            _context = context;
-            _configuration = configuration;
-            _logger = logger;
-        }
+    public AuthService(
+        IdentityDbContext context,
+        IConfiguration configuration,
+        ILogger<AuthService> logger,
+        IHttpContextAccessor httpContextAccessor) // ADD THIS PARAMETER
+    {
+        _context = context;
+        _configuration = configuration;
+        _logger = logger;
+        _httpContextAccessor = httpContextAccessor; // ADD THIS
+    }
 
         public async Task<LoginResponseDto?> LoginAsync(LoginDto loginDto)
         {
@@ -85,6 +89,78 @@ namespace IdentityService.Services
                 return null;
             }
         }
+        private static UserDto MapUserToDto(User user)
+        {
+            return new UserDto
+            {
+                Id = user.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                IsActive = user.IsActive,
+                CreatedAt = user.CreatedAt,
+                LastLoginAt = user.LastLoginAt,
+                TenantId = user.TenantId,
+                Roles = user.UserRoles.Select(ur => ur.Role.Name).ToArray()
+            };
+        }
+
+        public Task<bool> ValidateTokenAsync(string token)
+        {
+            try
+            {
+                var tokenHandler = new JwtSecurityTokenHandler();
+                var key = Encoding.UTF8.GetBytes(_configuration["Jwt:SecretKey"] 
+                    ?? throw new InvalidOperationException("JWT SecretKey not configured"));
+
+                var validationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = _configuration["Jwt:Issuer"],
+                    ValidAudience = _configuration["Jwt:Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ClockSkew = TimeSpan.Zero
+                };
+
+                var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+                return Task.FromResult(principal != null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Token validation failed");
+                return Task.FromResult(false);
+            }
+        }
+
+        public async Task<UserDto?> GetCurrentUserAsync()
+        {
+            try
+            {
+                var httpContext = _httpContextAccessor?.HttpContext;
+                if (httpContext?.User?.Identity?.IsAuthenticated != true)
+                    return null;
+
+                var userIdClaim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(userIdClaim, out var userId))
+                    return null;
+
+                var user = await _context.Users
+                    .Include(u => u.UserRoles)
+                    .ThenInclude(ur => ur.Role)
+                    .FirstOrDefaultAsync(u => u.Id == userId && u.IsActive);
+
+                return user != null ? MapUserToDto(user) : null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting current user");
+                return null;
+            }
+        }
+
 
         public async Task<UserDto?> RegisterAsync(CreateUserDto createUserDto)
         {
@@ -164,33 +240,19 @@ namespace IdentityService.Services
         public async Task<UserDto?> GetCurrentUserAsync(Guid userId)
         {
             try
-            {
-                var user = await _context.Users
-                    .Include(u => u.UserRoles)
-                    .ThenInclude(ur => ur.Role)
-                    .FirstOrDefaultAsync(u => u.Id == userId && u.IsActive);
+    {
+        var user = await _context.Users
+            .Include(u => u.UserRoles)
+            .ThenInclude(ur => ur.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && u.IsActive);
 
-                if (user == null)
-                    return null;
-
-                return new UserDto
-                {
-                    Id = user.Id,
-                    Email = user.Email,
-                    FirstName = user.FirstName,
-                    LastName = user.LastName,
-                    IsActive = user.IsActive,
-                    CreatedAt = user.CreatedAt,
-                    LastLoginAt = user.LastLoginAt,
-                    TenantId = user.TenantId,
-                    Roles = user.UserRoles.Select(ur => ur.Role.Name).ToArray()
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting current user {UserId}", userId);
-                return null;
-            }
+        return user != null ? MapUserToDto(user) : null;
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error getting current user {UserId}", userId);
+        return null;
+    }
         }
 
         public async Task<bool> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword)
@@ -217,27 +279,43 @@ namespace IdentityService.Services
             }
         }
 
-        public async Task<string?> RefreshTokenAsync(string refreshToken)
+        public Task<string?> RefreshTokenAsync(string refreshToken)
         {
             // TODO: Implement refresh token logic with proper storage
             // For now, return null - this would typically involve validating
             // the refresh token and generating a new access token
-            await Task.CompletedTask;
-            return null;
+            return Task.FromResult<string?>(null);
         }
 
-        public async Task<bool> LogoutAsync(Guid userId)
+
+        // REPLACE the existing LogoutAsync method with this to fix the warning:
+        public Task<bool> LogoutAsync(string token)
         {
-            // TODO: Implement logout logic (invalidate tokens, etc.)
-            await Task.CompletedTask;
-            return true;
+            try
+            {
+                _logger.LogInformation("User logged out with token: {TokenPrefix}", 
+                    token.Substring(0, Math.Min(10, token.Length)));
+                
+                // TODO: Implement proper token revocation in production
+                // This might involve storing blacklisted tokens in Redis
+                
+                return Task.FromResult(true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during logout");
+                return Task.FromResult(false);
+            }
         }
 
-        public async Task<bool> ResetPasswordAsync(string email)
+        public Task<bool> ResetPasswordAsync(string email)
         {
             // TODO: Implement password reset logic
-            await Task.CompletedTask;
-            return true;
+            // This would typically involve:
+            // 1. Generate a password reset token
+            // 2. Store it in the database with expiration
+            // 3. Send email with reset link
+            return Task.FromResult(true);
         }
 
         private string GenerateJwtToken(User user)

@@ -80,7 +80,7 @@ builder.Services.AddScoped<ITenantService, TenantService>();
 
 // Tenant context (scoped so it's per request)
 builder.Services.AddScoped<ITenantContext, TenantContext>();
-
+builder.Services.AddHttpContextAccessor(); // Required for AuthService.GetCurrentUserAsync()
 // CORS
 builder.Services.AddCors(options =>
 {

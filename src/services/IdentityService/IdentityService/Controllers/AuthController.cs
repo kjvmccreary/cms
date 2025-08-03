@@ -70,23 +70,28 @@ namespace IdentityService.Controllers
         [Authorize]
         public async Task<IActionResult> Logout()
         {
-            var userId = _tenantContext.UserId;
-            await _authService.LogoutAsync(userId);
+            var token = Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
+
+            if (string.IsNullOrEmpty(token))
+                return BadRequest(new { message = "Token not found" });
+
+            await _authService.LogoutAsync(token);
             return Ok(new { message = "Logged out successfully" });
         }
+
 
         [HttpGet("me")]
         [Authorize]
         public async Task<ActionResult<UserDto>> GetCurrentUser()
         {
-            var userId = _tenantContext.UserId;
-            var user = await _authService.GetCurrentUserAsync(userId);
-            
+            var user = await _authService.GetCurrentUserAsync(); // No parameters
+
             if (user == null)
                 return NotFound();
 
             return Ok(user);
         }
+
 
         [HttpPost("change-password")]
         [Authorize]
