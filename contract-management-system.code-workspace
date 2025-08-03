@@ -1,0 +1,66 @@
+{
+  "folders": [
+    {
+      "name": "Frontend",
+      "path": "./src/frontend"
+    },
+    {
+      "name": "Identity Service",
+      "path": "./src/services/IdentityService/IdentityService"
+    },
+    {
+      "name": "Contract Service",
+      "path": "./src/services/ContractService/ContractService"
+    },
+    {
+      "name": "Document Service",
+      "path": "./src/services/DocumentService/DocumentService"
+    },
+    {
+      "name": "Notification Service",
+      "path": "./src/services/NotificationService/NotificationService"
+    },
+    {
+      "name": "Audit Service",
+      "path": "./src/services/AuditService/AuditService"
+    },
+    {
+      "name": "Shared",
+      "path": "./src/shared/Shared"
+    },
+    {
+      "name": "Infrastructure",
+      "path": "./infrastructure"
+    },
+    {
+      "name": "Root",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "dotnet.defaultSolution": "ContractManagementSystem.sln",
+    "sqltools.connections": [
+      {
+        "previewLimit": 50,
+        "server": "localhost",
+        "port": 5434,
+        "driver": "PostgreSQL",
+        "name": "CMS",
+        "database": "cms_main",
+        "username": "cms_user",
+        "password": "cms_password"
+      }
+    ]
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-dotnettools.csharp",
+      "ms-dotnettools.vscode-dotnet-runtime",
+      "bradlc.vscode-tailwindcss",
+      "esbenp.prettier-vscode",
+      "ms-vscode.vscode-typescript-next",
+      "ms-vscode-remote.remote-containers",
+      "ms-vscode.PowerShell"
+    ]
+  }
+}
