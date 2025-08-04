@@ -103,6 +103,22 @@ namespace ContractService.Models
         }
 
         /// <summary>
+        /// Check if the contract can be edited in this status
+        /// </summary>
+        public static bool IsEditable(this ContractStatus status)
+        {
+            return status is ContractStatus.Draft or ContractStatus.UnderReview;
+        }
+
+        /// <summary>
+        /// Check if the contract requires approval workflow
+        /// </summary>
+        public static bool RequiresApproval(this ContractStatus status)
+        {
+            return status is ContractStatus.PendingApproval or ContractStatus.Approved;
+        }
+
+        /// <summary>
         /// Get valid next statuses for the current status
         /// </summary>
         public static List<ContractStatus> GetValidNextStatuses(this ContractStatus currentStatus)
@@ -120,6 +136,27 @@ namespace ContractService.Models
                 ContractStatus.Renewed => new(),
                 ContractStatus.Cancelled => new(),
                 _ => new()
+            };
+        }
+
+        /// <summary>
+        /// Get status color for UI
+        /// </summary>
+        public static string GetStatusColor(this ContractStatus status)
+        {
+            return status switch
+            {
+                ContractStatus.Draft => "#6c757d", // Gray
+                ContractStatus.UnderReview => "#fd7e14", // Orange
+                ContractStatus.PendingApproval => "#ffc107", // Yellow
+                ContractStatus.Approved => "#20c997", // Teal
+                ContractStatus.Active => "#28a745", // Green
+                ContractStatus.Suspended => "#6f42c1", // Purple
+                ContractStatus.Expired => "#dc3545", // Red
+                ContractStatus.Terminated => "#dc3545", // Red
+                ContractStatus.Renewed => "#17a2b8", // Cyan
+                ContractStatus.Cancelled => "#6c757d", // Gray
+                _ => "#6c757d"
             };
         }
     }
