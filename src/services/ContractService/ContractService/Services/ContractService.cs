@@ -1,9 +1,10 @@
-using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using AutoMapper;
 using ContractService.Data;
 using ContractService.Models;
 using ContractService.DTOs;
-using ContractService.Services;
+using Shared.Infrastructure;
+using Shared.DTOs;
 
 namespace ContractService.Services
 {
@@ -38,14 +39,11 @@ namespace ContractService.Services
                 // Apply search filter
                 if (!string.IsNullOrWhiteSpace(search))
                 {
-                    search = search.ToLower();
                     query = query.Where(c => 
-                        c.Title.ToLower().Contains(search) ||
-                        c.ContractNumber.ToLower().Contains(search) ||
-                        c.Description != null && c.Description.ToLower().Contains(search) ||
-                        c.Department != null && c.Department.ToLower().Contains(search) ||
-                        c.ProjectCode != null && c.ProjectCode.ToLower().Contains(search) ||
-                        c.Tags != null && c.Tags.ToLower().Contains(search));
+                        c.Title.Contains(search) ||
+                        c.ContractNumber.Contains(search) ||
+                        (c.Description != null && c.Description.Contains(search)) ||
+                        c.ContractType.Name.Contains(search));
                 }
 
                 // Apply status filter
@@ -54,7 +52,6 @@ namespace ContractService.Services
                     query = query.Where(c => c.Status == statusEnum);
                 }
 
-                // Get total count
                 var totalCount = await query.CountAsync();
 
                 // Apply pagination and ordering
@@ -74,8 +71,7 @@ namespace ContractService.Services
                     Items = contractDtos,
                     TotalCount = totalCount,
                     Page = page,
-                    PageSize = pageSize,
-                    TotalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+                    PageSize = pageSize
                 };
             }
             catch (Exception ex)
@@ -129,56 +125,42 @@ namespace ContractService.Services
                     throw new ArgumentException("End date must be after start date.");
                 }
 
-                // Validate parent contract if specified
-                if (createDto.ParentContractId.HasValue)
-                {
-                    var parentExists = await _context.Contracts
-                        .AnyAsync(c => c.Id == createDto.ParentContractId && c.TenantId == _tenantContext.TenantId);
-                    if (!parentExists)
-                    {
-                        throw new ArgumentException("Parent contract not found.");
-                    }
-                }
-
-                // Create contract entity
+                // Create new contract
                 var contract = _mapper.Map<Contract>(createDto);
                 contract.Id = Guid.NewGuid();
                 contract.ContractNumber = await GenerateContractNumberAsync();
                 contract.Status = ContractStatus.Draft;
-                contract.LastStatusChangeDate = DateTime.UtcNow;
                 contract.TenantId = _tenantContext.TenantId;
-                contract.CreatedBy = _tenantContext.UserId;
                 contract.CreatedAt = DateTime.UtcNow;
                 contract.UpdatedAt = DateTime.UtcNow;
-
-                // Set default values from contract type
-                if (!contract.RenewalReminderDays.HasValue || contract.RenewalReminderDays == 0)
-                {
-                    contract.RenewalReminderDays = contractType.DefaultReminderDays;
-                }
-
-                // Add parties
-                foreach (var partyDto in createDto.Parties)
-                {
-                    var party = _mapper.Map<ContractParty>(partyDto);
-                    party.Id = Guid.NewGuid();
-                    party.ContractId = contract.Id;
-                    party.TenantId = _tenantContext.TenantId;
-                    party.CreatedAt = DateTime.UtcNow;
-                    party.UpdatedAt = DateTime.UtcNow;
-                    party.CreatedBy = _tenantContext.UserId;
-                    contract.Parties.Add(party);
-                }
+                contract.CreatedBy = _tenantContext.UserId;
+                contract.UpdatedBy = _tenantContext.UserId;
 
                 _context.Contracts.Add(contract);
+
+                // Add parties if provided
+                if (createDto.Parties?.Any() == true)
+                {
+                    foreach (var partyDto in createDto.Parties.OrderBy(p => p.SortOrder))
+                    {
+                        var party = _mapper.Map<ContractParty>(partyDto);
+                        party.Id = Guid.NewGuid();
+                        party.ContractId = contract.Id;
+                        party.TenantId = _tenantContext.TenantId;
+                        party.CreatedAt = DateTime.UtcNow;
+                        party.UpdatedAt = DateTime.UtcNow;
+                        party.CreatedBy = _tenantContext.UserId;
+                        party.UpdatedBy = _tenantContext.UserId;
+
+                        _context.ContractParties.Add(party);
+                    }
+                }
+
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Contract {ContractId} ({ContractNumber}) created for tenant {TenantId}", 
-                    contract.Id, contract.ContractNumber, _tenantContext.TenantId);
+                _logger.LogInformation("Contract {ContractId} created successfully for tenant {TenantId}", contract.Id, _tenantContext.TenantId);
 
-                // Return the created contract with includes
-                var createdContract = await GetContractByIdAsync(contract.Id);
-                return createdContract!;
+                return await GetContractByIdAsync(contract.Id) ?? throw new InvalidOperationException("Failed to retrieve created contract");
             }
             catch (Exception ex)
             {
@@ -222,15 +204,14 @@ namespace ContractService.Services
                     throw new ArgumentException("End date must be after start date.");
                 }
 
-                // Update contract properties
+                // Update contract
                 _mapper.Map(updateDto, contract);
                 contract.UpdatedAt = DateTime.UtcNow;
                 contract.UpdatedBy = _tenantContext.UserId;
 
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Contract {ContractId} ({ContractNumber}) updated for tenant {TenantId}", 
-                    id, contract.ContractNumber, _tenantContext.TenantId);
+                _logger.LogInformation("Contract {ContractId} updated successfully for tenant {TenantId}", id, _tenantContext.TenantId);
 
                 return await GetContractByIdAsync(id);
             }
@@ -254,39 +235,15 @@ namespace ContractService.Services
                 }
 
                 // Check if contract can be deleted
-                if (contract.Status.IsFinalized())
+                if (!contract.Status.IsEditable())
                 {
                     throw new InvalidOperationException($"Cannot delete contract in {contract.Status} status.");
                 }
 
-                // Check for child contracts
-                var hasChildContracts = await _context.Contracts
-                    .AnyAsync(c => c.ParentContractId == id && c.TenantId == _tenantContext.TenantId);
-
-                if (hasChildContracts)
-                {
-                    throw new InvalidOperationException("Cannot delete contract that has child contracts (renewals/amendments).");
-                }
-
-                // For draft contracts, we can do a hard delete
-                if (contract.Status == ContractStatus.Draft)
-                {
-                    _context.Contracts.Remove(contract);
-                }
-                else
-                {
-                    // Soft delete for other statuses
-                    contract.Status = ContractStatus.Cancelled;
-                    contract.StatusChangeReason = "Contract deleted";
-                    contract.LastStatusChangeDate = DateTime.UtcNow;
-                    contract.LastStatusChangedById = _tenantContext.UserId;
-                    contract.UpdatedAt = DateTime.UtcNow;
-                    contract.UpdatedBy = _tenantContext.UserId;
-                }
-
+                _context.Contracts.Remove(contract);
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Contract {ContractId} deleted for tenant {TenantId}", id, _tenantContext.TenantId);
+                _logger.LogInformation("Contract {ContractId} deleted successfully for tenant {TenantId}", id, _tenantContext.TenantId);
 
                 return true;
             }
@@ -313,7 +270,7 @@ namespace ContractService.Services
 
                 if (!Enum.TryParse<ContractStatus>(statusChangeDto.NewStatus, true, out var newStatus))
                 {
-                    throw new ArgumentException("Invalid status value.");
+                    throw new ArgumentException("Invalid contract status.");
                 }
 
                 // Validate status transition
@@ -365,16 +322,16 @@ namespace ContractService.Services
         {
             try
             {
-                var cutoffDate = DateTime.UtcNow.AddDays(daysAhead);
+                var cutoffDate = DateTime.UtcNow.Date.AddDays(daysAhead);
 
                 var contracts = await _context.Contracts
                     .Include(c => c.ContractType)
-                    .Include(c => c.Parties.OrderBy(p => p.SortOrder))
+                    .Include(c => c.Parties)
                     .Where(c => c.TenantId == _tenantContext.TenantId &&
-                               c.Status == ContractStatus.Active &&
                                c.EndDate.HasValue &&
-                               c.EndDate <= cutoffDate &&
-                               c.NotificationsEnabled)
+                               c.EndDate.Value.Date <= cutoffDate &&
+                               c.EndDate.Value.Date >= DateTime.UtcNow.Date &&
+                               c.Status == ContractStatus.Active)
                     .OrderBy(c => c.EndDate)
                     .ToListAsync();
 
@@ -396,9 +353,8 @@ namespace ContractService.Services
             {
                 var contracts = await _context.Contracts
                     .Include(c => c.ContractType)
-                    .Include(c => c.Parties.OrderBy(p => p.SortOrder))
-                    .Where(c => c.TenantId == _tenantContext.TenantId &&
-                               c.ContractTypeId == contractTypeId)
+                    .Include(c => c.Parties)
+                    .Where(c => c.TenantId == _tenantContext.TenantId && c.ContractTypeId == contractTypeId)
                     .OrderByDescending(c => c.CreatedAt)
                     .ToListAsync();
 
@@ -414,15 +370,19 @@ namespace ContractService.Services
             }
         }
 
-        public async Task<List<ContractDto>> GetActiveContractsAsync()
+        public async Task<List<ContractDto>> GetContractsByStatusAsync(string status)
         {
             try
             {
+                if (!Enum.TryParse<ContractStatus>(status, true, out var statusEnum))
+                {
+                    throw new ArgumentException("Invalid contract status.");
+                }
+
                 var contracts = await _context.Contracts
                     .Include(c => c.ContractType)
-                    .Include(c => c.Parties.OrderBy(p => p.SortOrder))
-                    .Where(c => c.TenantId == _tenantContext.TenantId &&
-                               c.Status == ContractStatus.Active)
+                    .Include(c => c.Parties)
+                    .Where(c => c.TenantId == _tenantContext.TenantId && c.Status == statusEnum)
                     .OrderByDescending(c => c.CreatedAt)
                     .ToListAsync();
 
@@ -433,62 +393,88 @@ namespace ContractService.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving active contracts for tenant {TenantId}", _tenantContext.TenantId);
+                _logger.LogError(ex, "Error retrieving contracts by status {Status} for tenant {TenantId}", status, _tenantContext.TenantId);
+                throw;
+            }
+        }
+
+        public async Task<ContractDto?> RenewContractAsync(Guid id, CreateContractDto renewalDto)
+        {
+            try
+            {
+                var originalContract = await _context.Contracts
+                    .Include(c => c.ContractType)
+                    .Include(c => c.Parties)
+                    .FirstOrDefaultAsync(c => c.Id == id && c.TenantId == _tenantContext.TenantId);
+
+                if (originalContract == null)
+                {
+                    return null;
+                }
+
+                if (originalContract.Status != ContractStatus.Active && originalContract.Status != ContractStatus.Expired)
+                {
+                    throw new InvalidOperationException($"Cannot renew contract in {originalContract.Status} status.");
+                }
+
+                // Create renewal contract
+                renewalDto.ParentContractId = originalContract.Id;
+                var renewedContract = await CreateContractAsync(renewalDto);
+
+                // Update original contract status
+                originalContract.Status = ContractStatus.Renewed;
+                originalContract.UpdatedAt = DateTime.UtcNow;
+                originalContract.UpdatedBy = _tenantContext.UserId;
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Contract {ContractId} renewed successfully for tenant {TenantId}. New contract: {NewContractId}", 
+                    id, _tenantContext.TenantId, renewedContract.Id);
+
+                return renewedContract;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error renewing contract {ContractId} for tenant {TenantId}", id, _tenantContext.TenantId);
                 throw;
             }
         }
 
         private async Task<string> GenerateContractNumberAsync()
         {
-            // Get tenant info for prefix
-            var tenantPrefix = "CTR"; // Default prefix
-            try
-            {
-                // In a real implementation, you might fetch tenant details
-                // For now, we'll use a simple format
-                tenantPrefix = _tenantContext.TenantId.ToString("N")[..3].ToUpper();
-            }
-            catch
-            {
-                // Fallback to default
-            }
-            
-            var year = DateTime.UtcNow.Year;
-            var yearSuffix = year.ToString()[2..]; // Last 2 digits of year
-            
-            // Find the next sequential number for this tenant and year
+            var currentYear = DateTime.UtcNow.Year;
+            var prefix = $"CT-{currentYear}-";
+
             var lastContract = await _context.Contracts
-                .Where(c => c.TenantId == _tenantContext.TenantId && 
-                           c.ContractNumber.StartsWith($"{tenantPrefix}-{yearSuffix}"))
+                .Where(c => c.TenantId == _tenantContext.TenantId && c.ContractNumber.StartsWith(prefix))
                 .OrderByDescending(c => c.ContractNumber)
                 .FirstOrDefaultAsync();
 
             int nextNumber = 1;
             if (lastContract != null)
             {
-                var parts = lastContract.ContractNumber.Split('-');
-                if (parts.Length >= 3 && int.TryParse(parts[2], out var lastNumber))
+                var lastNumberPart = lastContract.ContractNumber.Substring(prefix.Length);
+                if (int.TryParse(lastNumberPart, out var lastNumber))
                 {
                     nextNumber = lastNumber + 1;
                 }
             }
 
-            return $"{tenantPrefix}-{yearSuffix}-{nextNumber:D4}";
+            return $"{prefix}{nextNumber:D4}";
         }
 
-        private async Task PopulateUserNamesAsync(List<ContractDto> contractDtos)
+        private async Task PopulateUserNamesAsync(List<ContractDto> contracts)
         {
-            // In a real implementation, you would call a user service to get user names
-            // For now, we'll just leave them as placeholders or implement a simple lookup
+            // In a real implementation, you would call a user service here to get user names
+            // For now, we'll just leave them as null or set placeholder values
             await Task.CompletedTask;
-            
-            foreach (var contract in contractDtos)
+
+            foreach (var contract in contracts)
             {
-                contract.CreatedByName = "System User"; // Placeholder
-                contract.UpdatedByName = "System User"; // Placeholder
-                contract.OwnerName = contract.OwnerId.HasValue ? "Contract Owner" : null;
-                contract.ApprovedByName = contract.ApprovedById.HasValue ? "Approver" : null;
-                contract.LastStatusChangedByName = contract.LastStatusChangedById.HasValue ? "System User" : null;
+                // Placeholder implementation - in real app, fetch from user service
+                contract.OwnerName = contract.OwnerId?.ToString();
+                contract.ApprovedByName = contract.ApprovedById?.ToString();
+                contract.LastStatusChangedByName = contract.LastStatusChangedById?.ToString();
             }
         }
     }

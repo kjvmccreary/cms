@@ -7,7 +7,7 @@ namespace ContractService.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize]
+    // [Authorize]
     public class ContractTypesController : ControllerBase
     {
         private readonly IContractTypeService _contractTypeService;

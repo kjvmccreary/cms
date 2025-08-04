@@ -247,7 +247,7 @@ namespace ContractService.Validators
             return Enum.IsDefined(typeof(PartyType), partyType);
         }
 
-        private static bool BeValidUrl(string url)
+        private static bool BeValidUrl(string? url)
         {
             return Uri.TryCreate(url, UriKind.Absolute, out _);
         }

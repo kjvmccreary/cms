@@ -9,7 +9,7 @@ namespace ContractService.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize]
+    // [Authorize]
     public class ContractsController : ControllerBase
     {
         private readonly IContractService _contractService;
@@ -72,10 +72,15 @@ namespace ContractService.Controllers
         /// Create a new contract
         /// </summary>
         [HttpPost]
-        public async Task<ActionResult<ContractDto>> CreateContract(CreateContractDto createDto)
+        public async Task<ActionResult<ContractDto>> CreateContract([FromBody] CreateContractDto createDto)
         {
             try
             {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
                 var contract = await _contractService.CreateContractAsync(createDto);
                 return CreatedAtAction(nameof(GetContract), new { id = contract.Id }, contract);
             }
@@ -89,6 +94,7 @@ namespace ContractService.Controllers
                 return StatusCode(500, "An error occurred while creating the contract");
             }
         }
+
 
         /// <summary>
         /// Update an existing contract

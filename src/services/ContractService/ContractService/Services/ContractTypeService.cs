@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ContractService.Data;
 using ContractService.Models;
 using ContractService.DTOs;
-using ContractService.Services;
+using Shared.Infrastructure; // Use ITenantContext from Shared.Infrastructure
 
 namespace ContractService.Services
 {
@@ -32,7 +32,8 @@ namespace ContractService.Services
             {
                 var contractTypes = await _context.ContractTypes
                     .Where(ct => ct.TenantId == _tenantContext.TenantId && ct.IsActive)
-                    .OrderBy(ct => ct.Name)
+                    .OrderBy(ct => ct.SortOrder)
+                    .ThenBy(ct => ct.Name)
                     .ToListAsync();
 
                 return _mapper.Map<List<ContractTypeDto>>(contractTypes);
@@ -80,6 +81,7 @@ namespace ContractService.Services
                 contractType.CreatedBy = _tenantContext.UserId;
                 contractType.CreatedAt = DateTime.UtcNow;
                 contractType.UpdatedAt = DateTime.UtcNow;
+                contractType.UpdatedBy = _tenantContext.UserId;
                 contractType.IsActive = true;
 
                 _context.ContractTypes.Add(contractType);
@@ -141,6 +143,7 @@ namespace ContractService.Services
             try
             {
                 var contractType = await _context.ContractTypes
+                    .Include(ct => ct.Contracts)
                     .FirstOrDefaultAsync(ct => ct.Id == id && ct.TenantId == _tenantContext.TenantId);
 
                 if (contractType == null)
@@ -148,20 +151,13 @@ namespace ContractService.Services
                     return false;
                 }
 
-                // Check if there are active contracts using this type
-                var hasActiveContracts = await _context.Contracts
-                    .AnyAsync(c => c.ContractTypeId == id && c.TenantId == _tenantContext.TenantId && c.IsActive);
-
-                if (hasActiveContracts)
+                // Check if contract type is in use
+                if (contractType.Contracts.Any())
                 {
-                    throw new InvalidOperationException("Cannot delete contract type that is being used by active contracts.");
+                    throw new InvalidOperationException("Cannot delete contract type that is being used by contracts.");
                 }
 
-                // Soft delete
-                contractType.IsActive = false;
-                contractType.UpdatedAt = DateTime.UtcNow;
-                contractType.UpdatedBy = _tenantContext.UserId;
-
+                _context.ContractTypes.Remove(contractType);
                 await _context.SaveChangesAsync();
 
                 _logger.LogInformation("Contract type {ContractTypeId} deleted for tenant {TenantId}", id, _tenantContext.TenantId);
