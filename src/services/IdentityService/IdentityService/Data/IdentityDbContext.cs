@@ -49,6 +49,7 @@ namespace IdentityService.Data
             {
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Name).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.Description).HasMaxLength(200);
                 entity.HasIndex(e => e.Name).IsUnique();
             });
 
@@ -56,6 +57,7 @@ namespace IdentityService.Data
             modelBuilder.Entity<UserRole>(entity =>
             {
                 entity.HasKey(e => new { e.UserId, e.RoleId });
+                entity.Property(e => e.AssignedAt).HasDefaultValueSql("NOW()");
                 
                 entity.HasOne(e => e.User)
                       .WithMany(u => u.UserRoles)
@@ -74,9 +76,9 @@ namespace IdentityService.Data
 
         private static void SeedData(ModelBuilder modelBuilder)
         {
-            // Seed default roles
-            var adminRoleId = Guid.NewGuid();
-            var userRoleId = Guid.NewGuid();
+            // Use static GUIDs instead of Guid.NewGuid()
+            var adminRoleId = new Guid("12345678-1234-1234-1234-123456789012");
+            var userRoleId = new Guid("87654321-4321-4321-4321-210987654321");
 
             modelBuilder.Entity<Role>().HasData(
                 new Role { Id = adminRoleId, Name = "Admin", Description = "System Administrator" },

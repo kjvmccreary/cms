@@ -55,7 +55,7 @@ namespace IdentityService.Models
         public Guid RoleId { get; set; }
         public Role Role { get; set; } = null!;
         
-        public DateTime AssignedAt { get; set; } = DateTime.UtcNow;
+        public DateTime AssignedAt { get; set; } 
         public Guid AssignedBy { get; set; }
     }
 }

@@ -15,7 +15,7 @@ namespace IdentityService.Models
         public string Domain { get; set; } = string.Empty;
         
         public bool IsActive { get; set; } = true;
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } 
         public DateTime? UpdatedAt { get; set; }
         
         // Navigation properties

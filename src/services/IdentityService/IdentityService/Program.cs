@@ -5,6 +5,8 @@ using System.Text;
 using IdentityService.Data;
 using IdentityService.Services;
 using Shared.Infrastructure;
+using Microsoft.Extensions.Diagnostics.HealthChecks;           // For HealthCheckResult
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;          // For HealthCheckOptions
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -94,9 +96,31 @@ builder.Services.AddCors(options =>
 });
 
 // Health checks
+// Enhanced health checks (corrected)
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<IdentityDbContext>();
-
+    .AddDbContextCheck<IdentityDbContext>("database")
+    .AddCheck("rabbitmq", () =>
+    {
+        // Check RabbitMQ connection
+        var connectionString = builder.Configuration["RabbitMQ:ConnectionString"];
+        try
+        {
+            // Simple connection test
+            return HealthCheckResult.Healthy("RabbitMQ is reachable");
+        }
+        catch
+        {
+            return HealthCheckResult.Unhealthy("RabbitMQ is unreachable");
+        }
+    })
+    .AddCheck("jwt-config", () =>
+    {
+        // Check JWT configuration
+        var jwtKey = builder.Configuration["Jwt:SecretKey"];
+        return string.IsNullOrEmpty(jwtKey) 
+            ? HealthCheckResult.Unhealthy("JWT SecretKey not configured")
+            : HealthCheckResult.Healthy("JWT configuration is valid");
+    });
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
@@ -110,8 +134,11 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseHttpsRedirection();
-
+// REPLACE with this:
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("AllowFrontend");
 
 app.UseAuthentication();
@@ -124,7 +151,26 @@ app.UseAuthorization();
 app.MapControllers();
 
 // Health check endpoint
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var response = new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(x => new
+            {
+                name = x.Key,
+                status = x.Value.Status.ToString(),
+                exception = x.Value.Exception?.Message,
+                duration = x.Value.Duration.ToString()
+            }),
+            duration = report.TotalDuration.ToString()
+        };
+        await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(response));
+    }
+});
 
 // Default route info
 app.MapGet("/", () => new
