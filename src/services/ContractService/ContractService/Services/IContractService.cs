@@ -1,4 +1,5 @@
 using ContractService.DTOs;
+using Shared.DTOs; // ← ADD THIS LINE
 
 namespace ContractService.Services
 {
@@ -12,15 +13,7 @@ namespace ContractService.Services
         Task<ContractDto?> ChangeContractStatusAsync(Guid id, ContractStatusChangeDto statusChangeDto);
         Task<List<ContractDto>> GetExpiringContractsAsync(int daysAhead = 30);
         Task<List<ContractDto>> GetContractsByTypeAsync(Guid contractTypeId);
-        Task<List<ContractDto>> GetActiveContractsAsync();
-    }
-
-    public interface IContractTypeService
-    {
-        Task<List<ContractTypeDto>> GetContractTypesAsync();
-        Task<ContractTypeDto?> GetContractTypeByIdAsync(Guid id);
-        Task<ContractTypeDto> CreateContractTypeAsync(CreateContractTypeDto createDto);
-        Task<ContractTypeDto?> UpdateContractTypeAsync(Guid id, CreateContractTypeDto updateDto);
-        Task<bool> DeleteContractTypeAsync(Guid id);
+        Task<List<ContractDto>> GetContractsByStatusAsync(string status);
+        Task<ContractDto?> RenewContractAsync(Guid id, CreateContractDto renewalDto);
     }
 }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using ContractService.Services;
 using ContractService.DTOs;
 using ContractService.Models;
+using Shared.DTOs; // ← ADD THIS LINE
 
 namespace ContractService.Controllers
 {
@@ -30,15 +31,14 @@ namespace ContractService.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10,
             [FromQuery] string? search = null,
-            [FromQuery] string? status = null)
+            [FromQuery] string? status = null,
+            [FromQuery] Guid? contractTypeId = null,
+            [FromQuery] string? department = null)
         {
             try
             {
-                if (page < 1) page = 1;
-                if (pageSize < 1 || pageSize > 100) pageSize = 10;
-
-                var result = await _contractService.GetContractsAsync(page, pageSize, search, status);
-                return Ok(result);
+                var contracts = await _contractService.GetContractsAsync(page, pageSize, search, status);
+                return Ok(contracts);
             }
             catch (Exception ex)
             {
@@ -56,12 +56,9 @@ namespace ContractService.Controllers
             try
             {
                 var contract = await _contractService.GetContractByIdAsync(id);
-                
                 if (contract == null)
-                {
-                    return NotFound($"Contract with ID {id} not found");
-                }
-                    
+                    return NotFound();
+
                 return Ok(contract);
             }
             catch (Exception ex)
@@ -79,11 +76,6 @@ namespace ContractService.Controllers
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
                 var contract = await _contractService.CreateContractAsync(createDto);
                 return CreatedAtAction(nameof(GetContract), new { id = contract.Id }, contract);
             }
@@ -106,18 +98,10 @@ namespace ContractService.Controllers
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
                 var contract = await _contractService.UpdateContractAsync(id, updateDto);
-                
                 if (contract == null)
-                {
-                    return NotFound($"Contract with ID {id} not found");
-                }
-                    
+                    return NotFound();
+
                 return Ok(contract);
             }
             catch (ArgumentException ex)
@@ -132,20 +116,17 @@ namespace ContractService.Controllers
         }
 
         /// <summary>
-        /// Delete a contract (soft delete)
+        /// Delete a contract
         /// </summary>
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteContract(Guid id)
         {
             try
             {
-                var success = await _contractService.DeleteContractAsync(id);
-                
-                if (!success)
-                {
-                    return NotFound($"Contract with ID {id} not found");
-                }
-                    
+                var deleted = await _contractService.DeleteContractAsync(id);
+                if (!deleted)
+                    return NotFound();
+
                 return NoContent();
             }
             catch (Exception ex)
@@ -163,18 +144,10 @@ namespace ContractService.Controllers
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
                 var contract = await _contractService.ChangeContractStatusAsync(id, statusDto);
-                
                 if (contract == null)
-                {
-                    return NotFound($"Contract with ID {id} not found");
-                }
-                    
+                    return NotFound();
+
                 return Ok(contract);
             }
             catch (ArgumentException ex)
@@ -183,21 +156,19 @@ namespace ContractService.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error changing status for contract {ContractId}", id);
+                _logger.LogError(ex, "Error changing contract status for {ContractId}", id);
                 return StatusCode(500, "An error occurred while changing the contract status");
             }
         }
 
         /// <summary>
-        /// Get contracts expiring within specified days
+        /// Get contracts expiring soon
         /// </summary>
         [HttpGet("expiring")]
-        public async Task<ActionResult<List<ContractDto>>> GetExpiringContracts([FromQuery] int daysAhead = 30)
+        public async Task<ActionResult<IEnumerable<ContractDto>>> GetExpiringContracts([FromQuery] int daysAhead = 30)
         {
             try
             {
-                if (daysAhead < 1 || daysAhead > 365) daysAhead = 30;
-
                 var contracts = await _contractService.GetExpiringContractsAsync(daysAhead);
                 return Ok(contracts);
             }
@@ -209,10 +180,10 @@ namespace ContractService.Controllers
         }
 
         /// <summary>
-        /// Get contracts by contract type
+        /// Get contracts by type
         /// </summary>
         [HttpGet("by-type/{contractTypeId}")]
-        public async Task<ActionResult<List<ContractDto>>> GetContractsByType(Guid contractTypeId)
+        public async Task<ActionResult<IEnumerable<ContractDto>>> GetContractsByType(Guid contractTypeId)
         {
             try
             {
@@ -222,100 +193,32 @@ namespace ContractService.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving contracts by type {ContractTypeId}", contractTypeId);
-                return StatusCode(500, "An error occurred while retrieving contracts by type");
+                return StatusCode(500, "An error occurred while retrieving contracts");
             }
         }
 
         /// <summary>
-        /// Get all active contracts
+        /// Renew a contract
         /// </summary>
-        [HttpGet("active")]
-        public async Task<ActionResult<List<ContractDto>>> GetActiveContracts()
+        [HttpPost("{id}/renew")]
+        public async Task<ActionResult<ContractDto>> RenewContract(Guid id, CreateContractDto renewalDto)
         {
             try
             {
-                var contracts = await _contractService.GetActiveContractsAsync();
-                return Ok(contracts);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving active contracts");
-                return StatusCode(500, "An error occurred while retrieving active contracts");
-            }
-        }
-
-        /// <summary>
-        /// Get contract dashboard statistics
-        /// </summary>
-        [HttpGet("dashboard")]
-        public async Task<ActionResult<object>> GetDashboardStats()
-        {
-            try
-            {
-                var totalContracts = await _contractService.GetContractsAsync(1, 1);
-                var activeContracts = await _contractService.GetActiveContractsAsync();
-                var expiringContracts = await _contractService.GetExpiringContractsAsync(30);
-                
-                var stats = new
-                {
-                    TotalContracts = totalContracts.TotalCount,
-                    ActiveContracts = activeContracts.Count,
-                    ExpiringContracts = expiringContracts.Count,
-                    ExpiringIn7Days = expiringContracts.Count(c => c.DaysUntilExpiration <= 7),
-                    ExpiringIn30Days = expiringContracts.Count(c => c.DaysUntilExpiration <= 30)
-                };
-                
-                return Ok(stats);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving dashboard statistics");
-                return StatusCode(500, "An error occurred while retrieving dashboard statistics");
-            }
-        }
-
-        /// <summary>
-        /// Get contract status workflow options
-        /// </summary>
-        [HttpGet("{id}/status-options")]
-        public async Task<ActionResult<object>> GetStatusOptions(Guid id)
-        {
-            try
-            {
-                var contract = await _contractService.GetContractByIdAsync(id);
+                var contract = await _contractService.RenewContractAsync(id, renewalDto);
                 if (contract == null)
-                {
-                    return NotFound($"Contract with ID {id} not found");
-                }
+                    return NotFound();
 
-                if (!Enum.TryParse<ContractStatus>(contract.Status, out var currentStatus))
-                {
-                    return BadRequest("Invalid current contract status");
-                }
-
-                var validNextStatuses = currentStatus.GetValidNextStatuses();
-                var statusOptions = validNextStatuses.Select(status => new
-                {
-                    Value = status.ToString(),
-                    Display = status.GetDescription(),
-                    Color = status.GetStatusColor()
-                }).ToList();
-
-                return Ok(new
-                {
-                    CurrentStatus = new
-                    {
-                        Value = currentStatus.ToString(),
-                        Display = currentStatus.GetDescription(),
-                        Color = currentStatus.GetStatusColor()
-                    },
-                    ValidNextStatuses = statusOptions
-                });
+                return Ok(contract);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving status options for contract {ContractId}", id);
-                return StatusCode(500, "An error occurred while retrieving status options");
+                _logger.LogError(ex, "Error renewing contract {ContractId}", id);
+                return StatusCode(500, "An error occurred while renewing the contract");
             }
         }
     }
